@@ -1,0 +1,446 @@
+import 'dart:html' as html;
+import 'dart:html';
+import 'dart:typed_data';
+import 'dart:ui';
+import 'package:flutter/services.dart';
+import 'package:pdf/pdf.dart';
+import 'package:pdf/widgets.dart' as pw;
+import 'package:firebase_storage/firebase_storage.dart' as firebase_storage;
+import 'package:flutter/material.dart';
+import 'package:register/model/student.dart';
+import 'package:register/utils/firebase_helper.dart';
+import 'package:register/widgets/custom.dart';
+
+class StudentDetails extends StatefulWidget {
+  final String teamname;
+  final String college;
+  const StudentDetails({
+    Key? key,
+    required this.teamname,
+    required this.college,
+  }) : super(key: key);
+
+  @override
+  State<StudentDetails> createState() => _StudentDetailsState();
+}
+
+class _StudentDetailsState extends State<StudentDetails> {
+  int currentStep = 0;
+  bool isloading = false;
+  Student student = Student();
+  Uint8List? selectedFileBytes;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.transparent,
+      body: Stack(
+        children: [
+          Container(
+            decoration: const BoxDecoration(
+              image: DecorationImage(
+                image: AssetImage('lib/img/bg.png'),
+                fit: BoxFit.cover,
+              ),
+            ),
+          ),
+          Center(
+            child: ClipRRect(
+              child: BackdropFilter(
+                filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade200.withOpacity(0.1),
+                    border: Border.all(
+                      color: Colors.grey.shade200.withOpacity(0.5),
+                      width: 1,
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.white.withOpacity(0.2),
+                        spreadRadius: 5,
+                        blurRadius: 7,
+                        offset: const Offset(0, 3),
+                      ),
+                    ],
+                  ),
+                  padding: const EdgeInsets.all(20),
+                  width: MediaQuery.of(context).size.shortestSide > 600
+                      ? MediaQuery.of(context).size.width * 0.65
+                      : MediaQuery.of(context).size.width * 0.85,
+                  height: MediaQuery.of(context).size.height * 0.7,
+                  child: isloading
+                      ? const Center(
+                          child: CircularProgressIndicator(),
+                        )
+                      : Stepper(
+                          type: StepperType.horizontal,
+                          currentStep: currentStep,
+                          onStepCancel: () => currentStep == 0
+                              ? null
+                              : setState(() {
+                                  currentStep -= 1;
+                                }),
+                          onStepContinue: () async {
+                            bool isLastStep =
+                                (currentStep == getSteps().length - 1);
+                            if (isLastStep) {
+                              try {
+                                setState(() {
+                                  isloading = true;
+                                });
+
+                                student.teamname = widget.teamname;
+                                student.college = widget.college;
+
+                                await FirebaseHelper()
+                                    .addStudentRegistration(student);
+
+                                // If a file is selected, create PDF and upload
+                                if (selectedFileBytes != null) {
+                                  await createAndUploadPdf();
+                                }
+
+                                setState(() {
+                                  isloading = false;
+                                });
+
+                                // Navigate to success screen
+                                Navigator.pushReplacement(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (context) => Scaffold(
+                                      body: Center(
+                                        child: Column(
+                                          mainAxisAlignment:
+                                              MainAxisAlignment.center,
+                                          children: [
+                                            Icon(
+                                              Icons.check_circle,
+                                              color: Colors.green,
+                                              size: 100,
+                                            ),
+                                            Text(
+                                              'Registration Successful',
+                                              style: TextStyle(
+                                                fontSize: 20,
+                                                fontWeight: FontWeight.bold,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                );
+                              } catch (e) {
+                                setState(() {
+                                  isloading = false;
+                                });
+                                // Handle error
+                                print(e);
+                              }
+                            } else {
+                              setState(() {
+                                currentStep += 1;
+                              });
+                            }
+                          },
+                          onStepTapped: (step) => setState(() {
+                            currentStep = step;
+                          }),
+                          steps: getSteps(),
+                        ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  List<Step> getSteps() {
+    return <Step>[
+      Step(
+        state: currentStep > 0 ? StepState.complete : StepState.indexed,
+        isActive: currentStep >= 0,
+        title: const Text(""),
+        content: Column(
+          children: [
+            CustomInput(
+              onChanged: (text) {
+                student.name = text;
+              },
+              hint: "Name",
+              inputBorder: const OutlineInputBorder(),
+            ),
+            CustomInput(
+              onChanged: (text) {
+                student.email = text;
+              },
+              hint: "Email",
+              inputBorder: const OutlineInputBorder(),
+            ),
+            CustomInput(
+              onChanged: (text) {
+                student.phone = text;
+              },
+              hint: "Phone Number",
+              inputBorder: const OutlineInputBorder(),
+            ),
+            const SizedBox(height: 20),
+          ],
+        ),
+      ),
+      Step(
+        state: currentStep > 1 ? StepState.complete : StepState.indexed,
+        isActive: currentStep >= 1,
+        title: const Text(""),
+        content: Column(
+          children: [
+            CustomInput(
+              initialValue: widget.college,
+              hint: "College",
+              inputBorder: OutlineInputBorder(),
+            ),
+            CustomInput(
+              initialValue: widget.teamname,
+              hint: "Team Name",
+              inputBorder: const OutlineInputBorder(),
+            ),
+          ],
+        ),
+      ),
+      Step(
+        state: currentStep > 2 ? StepState.complete : StepState.indexed,
+        isActive: currentStep >= 2,
+        title: const Text(""),
+        content: Column(
+          mainAxisAlignment: MainAxisAlignment.start,
+          children: [
+            const Text(
+              "UPLOAD PASSPORT SIZE PIC",
+              style: TextStyle(fontSize: 20),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                selectFile();
+              },
+              child: Text(selectedFileBytes != null
+                  ? 'Selected: ${selectedFileBytes!.length} bytes'
+                  : 'Select file'),
+            ),
+          ],
+        ),
+      ),
+    ];
+  }
+
+  Future<void> selectFile() async {
+    final filePickerInput =
+        html.window.document.createElement('input') as html.InputElement;
+    filePickerInput
+      ..type = 'file'
+      ..multiple = false
+      ..accept = 'image/*';
+    filePickerInput.onChange.listen((event) {
+      final files = filePickerInput.files;
+      if (files!.isNotEmpty) {
+        final file = files[0];
+        final reader = FileReader();
+        reader.onLoadEnd.listen((event) {
+          setState(() {
+            selectedFileBytes = reader.result as Uint8List?;
+          });
+        });
+        reader.readAsArrayBuffer(file);
+      }
+    });
+    filePickerInput.click();
+  }
+
+  createpdf() async {
+    PdfPageFormat customPageSize = const PdfPageFormat(
+      210.0, // Width remains the same as A4
+      120, // Half the height of A4
+      marginLeft: 0,
+      marginTop: 0,
+      marginRight: 0,
+      marginBottom: 0,
+    );
+    final pdf = pw.Document(
+      title: 'Candidate Nomination Form',
+      author: 'Etcetera', // Author name
+      creator:
+          'Guru Tegh Bahadur Institute of TEchnology', // Organization or application name
+      subject: 'Candidate Nomination Form',
+      pageMode: PdfPageMode.fullscreen,
+    );
+
+    final backgroundImage = pw.MemoryImage(Uint8List.fromList(
+        (await rootBundle.load('lib/img/bg.png')).buffer.asUint8List()));
+    final studentImage = pw.MemoryImage(student.imageData!);
+
+    pdf.addPage(
+      pw.Page(
+        pageFormat: customPageSize,
+        build: (pw.Context context) {
+          return pw.Stack(
+            children: [
+              pw.Container(
+                decoration: pw.BoxDecoration(
+                  image: pw.DecorationImage(
+                    image: backgroundImage,
+                    fit: pw.BoxFit.cover,
+                  ),
+                ),
+              ),
+              // pw.Container(
+              //   color: PdfColors.white.withOpacity(0.5),
+              // ),
+              pw.Container(
+                margin: const pw.EdgeInsets.only(
+                  top: 10,
+                  left: 15,
+                  right: 15,
+                ),
+                child: pw.Column(
+                  mainAxisAlignment: pw.MainAxisAlignment.start,
+                  children: [
+                    pw.Column(
+                      children: [
+                        pw.Text(
+                          "Candidate Nomination Form",
+                          style: pw.TextStyle(
+                            fontWeight: pw.FontWeight.bold,
+                            fontSize: 10,
+                          ),
+                        ),
+                        pw.Text(
+                          "Krabti 2024",
+                          style: pw.TextStyle(
+                            fontWeight: pw.FontWeight.bold,
+                            fontSize: 7,
+                          ),
+                        ),
+                      ],
+                    ),
+                    pw.Row(
+                      children: [
+                        pw.Container(
+                          decoration: pw.BoxDecoration(
+                            image: pw.DecorationImage(
+                              image: studentImage,
+                              fit: pw.BoxFit.cover,
+                            ),
+                          ),
+                          height: 45,
+                          width: 35,
+                        ),
+                        pw.SizedBox(
+                          width: 10,
+                        ),
+                        pw.Column(
+                          crossAxisAlignment: pw.CrossAxisAlignment.start,
+                          mainAxisAlignment: pw.MainAxisAlignment.spaceEvenly,
+                          children: [
+                            pw.Text(
+                              "Name: ${student.name}", // Display student name
+                              style: pw.TextStyle(fontSize: 8),
+                            ),
+                            pw.Text(
+                              "Constituency: ${student.college}", // Display student name
+                              style: pw.TextStyle(fontSize: 8),
+                            ),
+                            pw.Text(
+                              "Party Sadaysa: ${student.teamname}", // Display student name
+                              style: pw.TextStyle(fontSize: 8),
+                            ),
+                            pw.Text(
+                              "Phone Number: ${student.phone}", // Display student name
+                              style: pw.TextStyle(fontSize: 8),
+                            ),
+                            pw.Text(
+                              "Email: ${student.email}", // Display student name
+                              style: pw.TextStyle(fontSize: 8),
+                            ),
+                            // pw.Text(
+                            //   "Dil se kisi president mante ho: $studentName", // Display student name
+                            //   style: pw.TextStyle(fontSize: 8),
+                            // ),
+
+                            // Add other student information here
+                          ],
+                        ),
+                      ],
+                    ),
+                    pw.SizedBox(height: 4),
+                    pw.Row(
+                      mainAxisAlignment: pw.MainAxisAlignment.center,
+                      children: [
+                        pw.Text(
+                          "For Office use only", // Display student name
+                          style: pw.TextStyle(fontSize: 5),
+                        ),
+                      ],
+                    ),
+                    pw.SizedBox(height: 22),
+                    pw.Row(
+                      mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                      children: [
+                        pw.Text(
+                          "Candidate Signature", // Display student name
+                          style: pw.TextStyle(fontSize: 5),
+                        ),
+                        pw.Text(
+                          "Stamp Space", // Display student name
+                          style: pw.TextStyle(fontSize: 5),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+
+    // Save the PDF
+    final pdfBytes = await pdf.save();
+
+    // Convert PDF bytes to Blob
+    final blob = html.Blob([pdfBytes], 'application/pdf');
+
+    // Create object URL
+    final url = html.Url.createObjectUrlFromBlob(blob);
+
+    // Create anchor element for download
+    final anchor = html.AnchorElement(href: url)
+      ..setAttribute('download', '${student.name}Kranti.pdf')
+      ..text = 'Download PDF';
+// Upload the PDF to Firebase Storage
+    final storageRef = firebase_storage.FirebaseStorage.instance
+        .ref()
+        .child('${student.teamname}/${student.name}.pdf');
+    final uploadTask = storageRef.putBlob(blob);
+    final taskSnapshot = await uploadTask;
+    // final downloadUrl = await taskSnapshot.ref.getDownloadURL();
+    // Append anchor to the body
+    html.document.body!.children.add(anchor);
+
+    // Click the anchor to trigger download
+    anchor.click();
+
+    // Clean up
+    html.Url.revokeObjectUrl(url);
+    anchor.remove();
+  }
+
+  
+}
+
+
+
